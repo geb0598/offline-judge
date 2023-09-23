@@ -5,23 +5,19 @@
 
 class Solution {
 public:
-    Solution(const std::string& compiler = "g++", const std::string& compiler_option = "-std=c++17");
+    Solution(std::filesystem::path source_path, std::filesystem::path binary_path);
 
-    bool isUpdated() const;
-    void compile() const;
+    bool IsUpdated() const;
+    void Compile(const std::string& compiler, const std::string& compiler_option) const;
 
-    std::string getSourceFilename() const;
-    std::string getBinaryFilename() const;
+    const std::filesystem::path& get_source_path() const;
+    const std::filesystem::path& get_binary_path() const;
 
-    void printInfo() const;
+    void Print() const;
 
 private:
-    std::string source_filename_;
-    std::string binary_filename_;
+    std::filesystem::path source_path_;
+    std::filesystem::path binary_path_;
 
-    std::string compiler_;
-    std::string compiler_option_;
-
-    bool hasFile(const std::string& filename) const;
-    std::time_t getLastModifiedTime(const std::string& filename) const;
+    std::chrono::system_clock::time_point GetLastModifiedTime(const std::filesystem::path& path) const;
 };

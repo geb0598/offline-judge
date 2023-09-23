@@ -12,43 +12,48 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 
+LaunchResult::LaunchResult(const std::filesystem::path& path) :
+    path_(path),
+    status_(),
+    elapsed_time_() {}
 
-Launcher::LaunchResult::LaunchResult(int status, const std::string& filename, double elapsed_time) : filename_(filename), elapsed_time_(elapsed_time) {
-    setStatus(status);
+LaunchResult::LaunchResult(const std::filesystem::path& path, int status, std::chrono::system_clock::duration elapsed_time) :
+    path_(path),
+    status_(ParseStatus(status)),
+    elapsed_time_(elapsed_time) {}
+
+std::filesystem::path LaunchResult::get_path() const {
+    return path_;
 }
 
-const Launcher::LaunchResult::LaunchStatus& Launcher::LaunchResult::getStatus() const {
+LaunchResult::Status LaunchResult::get_status() const {
     return status_;
 }
 
-const std::string& Launcher::LaunchResult::getFilename() const {
-    return filename_;
-}
-
-const double Launcher::LaunchResult::getElapsedTime() const {
+std::chrono::system_clock::duration LaunchResult::get_elapsed_time() const {
     return elapsed_time_;
 }
 
-void Launcher::LaunchResult::setStatus(int status) {
+LaunchResult::Status LaunchResult::ParseStatus(int status) const {
     if (WIFEXITED(status)) {
-        status_ = LaunchStatus::SUCCESS;
-    } else if (WIFSIGNALED(status)) {
-        if (WTERMSIG(status) == SIGSEGV) {
-            status_ = LaunchStatus::SEGFAULT;
-        } else if (WTERMSIG(status) == SIGTERM) {
-            status_ = LaunchStatus::TIMEOUT;
-        } else {
-            status_ = LaunchStatus::OTHER_ERROR;
-        }
-    } else {
-        status_ = LaunchStatus::OTHER_ERROR;
+        return Status::LR_SUCCESS;
     }
+
+    if (WIFSIGNALED(status)) {
+        switch (WTERMSIG(status)) {
+            case SIGSEGV:
+                return Status::LR_SEGFAULT;
+            case SIGTERM:
+                return Status::LR_TIMEOUT;
+            default:
+                return Status::LR_OTHER_ERROR;
+        }
+    }
+
+    return Status::LR_UNKNOWN;
 }
 
-void Launcher::LaunchResult::printInfo() const {
-    std::cout << "[LaunchResult Info]\n";
-    std::cout << "\t[Result]: \n" << filename_ << '\n';
-    std::cout << "\t[Elapsed Time]: " << elapsed_time_ << " sec\n";
+void LaunchResult::Print() const {
 
 }
 
@@ -57,15 +62,19 @@ const Launcher& Launcher::getLauncher() {
     return launcher;
 }
 
-Launcher::LaunchResult Launcher::launch(const std::string& bin_filename, const std::string& input_filename, const std::string& output_filename, const double timeout_seconds) const {
+LaunchResult Launcher::Launch(
+        const std::filesystem::path binary_path, 
+        const std::filesystem::path& input_path, 
+        const std::filesystem::path& output_path, 
+        std::chrono::system_clock::duration timeout) const {
     pid_t pid = fork();
     if (pid == -1) {
         throw std::runtime_error("Failed to fork a process");
     } else if (pid == 0) {
-        int input_fd = open(input_filename.c_str(), O_RDONLY);
+        int input_fd = open(input_path.c_str(), O_RDONLY);
 
         if (input_fd == -1) {
-            DEBUG_MSG("Failed to open an input file: " + input_filename);
+            DEBUG_MSG("Failed to open an input file: " + input_path.string());
             exit(EXIT_FAILURE);
         }
 
@@ -74,10 +83,10 @@ Launcher::LaunchResult Launcher::launch(const std::string& bin_filename, const s
             exit(EXIT_FAILURE);
         }
 
-        int output_fd = open(output_filename.c_str(), O_WRONLY);
+        int output_fd = open(output_path.c_str(), O_WRONLY);
 
         if (output_fd == -1) {
-            DEBUG_MSG("Failed to open an ouput file: " + output_filename);
+            DEBUG_MSG("Failed to open an ouput file: " + output_path.string());
             exit(EXIT_FAILURE);
         }
 
@@ -85,15 +94,15 @@ Launcher::LaunchResult Launcher::launch(const std::string& bin_filename, const s
             DEBUG_MSG("Failed to redirect standard output to other file");
             exit(EXIT_FAILURE);
         }
-        execl(bin_filename.c_str(), bin_filename.c_str(), nullptr); 
+        execl(binary_path.c_str(), binary_path.c_str(), nullptr); 
     }
     auto start = std::chrono::system_clock::now();
 
     int status;
-    double elapsed_time;
+    std::chrono::system_clock::duration elapsed_time;
     while (true) {
-        elapsed_time = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now() - start).count();
-        if (elapsed_time >= timeout_seconds) {
+        elapsed_time = std::chrono::system_clock::now() - start;
+        if (elapsed_time >= timeout) {
             kill(pid, SIGTERM);
         }
 
@@ -101,5 +110,5 @@ Launcher::LaunchResult Launcher::launch(const std::string& bin_filename, const s
             break;
         }
     }
-    return LaunchResult(status, output_filename, elapsed_time);
+    return LaunchResult(output_path, status, elapsed_time);
 }

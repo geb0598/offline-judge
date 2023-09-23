@@ -1,4 +1,3 @@
-#include "configuration.h"
 #include "solution.h"
 
 #include "utility.h"
@@ -12,63 +11,53 @@
 
 #include <sys/stat.h>
 
-Solution::Solution(const std::string& compiler, const std::string& compiler_option):
-        compiler_(compiler), compiler_option_(compiler_option) {}
+Solution::Solution(std::filesystem::path source_path, std::filesystem::path binary_path):
+    source_path_(source_path),
+    binary_path_(binary_path) {}
 
-bool Solution::isUpdated() const {
-    if (!hasFile(source_filename_)) {
-        throw std::runtime_error("Failed to open file: " + source_filename_);
+bool Solution::IsUpdated() const {
+    if (std::filesystem::exists(source_path_)) {
+        throw std::runtime_error("Failed to open file: " + source_path_.string());
     }
 
-    return !hasFile(binary_filename_) || getLastModifiedTime(source_filename_) > getLastModifiedTime(binary_filename_);
+    return !std::filesystem::exists(binary_path_) || GetLastModifiedTime(source_path_) > GetLastModifiedTime(binary_path_);
 }
 
-void Solution::compile() const {
-    if (!isUpdated()) {
+void Solution::Compile(const std::string& compiler, const std::string& compiler_option) const {
+    if (!IsUpdated()) {
         DEBUG_MSG("File is already up-to-date");
         return;
     }
     
-    std::string compile_command = compiler_ + " " + compiler_option_ + " " + source_filename_ + " -o " + binary_filename_;
+    std::string compile_command = compiler + " " + compiler_option + " " + source_path_.string() + " -o " + binary_path_.string();
 
     int compile_result = std::system(compile_command.c_str());
     if (compile_result != 0) {
-        throw std::runtime_error("Failed to compile source file: " + source_filename_);
+        throw std::runtime_error("Failed to compile source file: " + source_path_.string());
     } else {
         DEBUG_MSG("Compilation Successful");
-        DEBUG_MSG("File created at " + binary_filename_);
+        DEBUG_MSG("File created at " + binary_path_.string());
     }
 }
 
-std::string Solution::getSourceFilename() const {
-    return source_filename_;
+const std::filesystem::path& Solution::get_source_path() const {
+    return source_path_;
 }
 
-std::string Solution::getBinaryFilename() const {
-    return binary_filename_;
+const std::filesystem::path& Solution::get_binary_path() const {
+    return binary_path_;
 }
 
-void Solution::printInfo() const {
-    std::cout << "[Solution Info]" << std::endl;
-    std::cout << "\tCompile Command: " + compiler_ + " " + compiler_option_ + " " + source_filename_ + " -o " + binary_filename_ << std::endl;
-    std::cout << "\tSource Filename: " + source_filename_ << std::endl;
-    std::cout << "\tLast Modified Time of Source File: " << getLastModifiedTime(source_filename_) << std::endl;
-    std::cout << "\tBinary Filename: " + binary_filename_ << std::endl;
-    std::cout << "\tLast Modified Time of Binary File: " << getLastModifiedTime(binary_filename_) << std::endl;
+void Solution::Print() const {
 }
 
-bool Solution::hasFile(const std::string& filename) const {
-    std::ifstream file(filename);
-    return file.good();
-}
-
-std::time_t Solution::getLastModifiedTime(const std::string& filename) const {
-    if (!hasFile(filename)) {
-        throw std::runtime_error("Failed to open file: " + filename);
+std::chrono::system_clock::time_point Solution::GetLastModifiedTime(const std::filesystem::path& path) const { 
+    if (!std::filesystem::exists(path)) {
+        throw std::runtime_error("Failed to open file: " + path.string());
     }
     struct stat file_stat;
-    if (stat(filename.c_str(), &file_stat) == -1) {
-        throw std::runtime_error("Failed to fetch file status: " + filename);
+    if (stat(path.c_str(), &file_stat) == -1) {
+        throw std::runtime_error("Failed to fetch file status: " + path.string());
     }
-    return file_stat.st_mtim.tv_sec;
+    return std::chrono::system_clock::from_time_t(file_stat.st_mtim.tv_sec);
 }
