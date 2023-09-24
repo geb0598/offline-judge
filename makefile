@@ -19,7 +19,7 @@ OBJECTS = $(addprefix $(OBJ_DIR)/, $(OBJS))
 TEST_SRCS = $(wildcard $(TEST_DIR)/*.cpp)
 TESTS = $(basename $(notdir $(TEST_SRCS)))
 
-TARGET = main
+TARGET = OfflineJudge
 TEST_TARGET = $(addprefix $(TEST_DIR)/, $(TESTS))
 
 all: $(TARGET) $(TEST_TARGET)

@@ -5,27 +5,61 @@
 #include <sstream>
 #include <utility>
 
-OfflineJudge::JudgeResult::JudgeResult(const std::vector<JudgeResult::LineStatus>& line_stats, double elapsed_time) : line_stats_(line_stats), elapsed_time_(elapsed_time) {}
+JudgeResult::JudgeResult(size_t id, Status status) : id_(id), status_(status) {}
 
-OfflineJudge::JudgeResult::JudgeResult(std::vector<JudgeResult::LineStatus>&& line_stats, double elapsed_time) : line_stats_(std::move(line_stats)), elapsed_time_(elapsed_time) {}
-
-const std::vector<OfflineJudge::JudgeResult::LineStatus>& OfflineJudge::JudgeResult::getLineStats() const {
-    return line_stats_;
+JudgeResult::JudgeResult(
+    size_t id,
+    std::vector<LineStatus>&& line_status_vec,
+    std::chrono::system_clock::duration elapsed_time
+) : id_(id), line_status_vec_(std::move(line_status_vec)), elapsed_time_(elapsed_time) {
+    JudgeResult::Status status = JudgeResult::Status::JR_CORRECT;
+    for (auto line_status : line_status_vec_) {
+        if (status == JudgeResult::Status::JR_CORRECT) {
+            if (line_status == JudgeResult::LineStatus::JRL_WRONG) {
+                status = JudgeResult::Status::JR_WRONG;
+            } else if (line_status == JudgeResult::LineStatus::JRL_ILL_FORMED) {
+                status = JudgeResult::Status::JR_ILL_FORMED;
+            }
+        } else if (status == JudgeResult::Status::JR_WRONG) {
+            if (line_status == JudgeResult::LineStatus::JRL_ILL_FORMED) {
+                status = JudgeResult::Status::JR_ILL_FORMED;
+            }
+        } else if (status == JudgeResult::Status::JR_ILL_FORMED) {
+            continue;
+        }
+    }
+    status_ = status;
 }
 
-const double OfflineJudge::JudgeResult::getElapsedTime() const {
+size_t JudgeResult::get_id() const {
+    return id_;
+}
+
+size_t JudgeResult::get_line_count() const {
+    return line_status_vec_.size();
+}
+
+JudgeResult::Status JudgeResult::get_status() const {
+    return status_;
+}
+
+JudgeResult::LineStatus JudgeResult::get_line_status(size_t index) const {
+    return line_status_vec_[index];
+}
+
+std::chrono::system_clock::duration JudgeResult::get_elapsed_time() const {
     return elapsed_time_;
 }
 
-const OfflineJudge& OfflineJudge::getOfflineJudge() {
+const OfflineJudge& OfflineJudge::GetOfflineJudge() {
     static OfflineJudge offline_judge;
     return offline_judge;
 }
 
-OfflineJudge::JudgeResult OfflineJudge::judge(const std::string& user_answer, const std::string& example_answer) const {
-    std::istringstream user_stream(user_answer), example_stream(example_answer);
+JudgeResult OfflineJudge::Judge(size_t id, const std::string& user_answer, const std::string& example_answer) const {
     auto start_time = std::chrono::system_clock::now();
-    std::vector<OfflineJudge::JudgeResult::LineStatus> result;
+    std::istringstream user_stream(user_answer), example_stream(example_answer);
+    std::vector<JudgeResult::LineStatus> line_status_vec;
     while (true) {
         if (user_stream.eof() && example_stream.eof()) {
             break;
@@ -37,13 +71,13 @@ OfflineJudge::JudgeResult OfflineJudge::judge(const std::string& user_answer, co
         if (!example_stream.eof()) {
             std::getline(example_stream, example_line);
         }
-        result.push_back(compareLine(user_line, example_line)); 
+       line_status_vec.push_back(CompareLine(user_line, example_line)); 
     }
-    double elapsed_time = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now() - start_time).count();
-    return OfflineJudge::JudgeResult(std::move(result), elapsed_time);
+    auto elapsed_time = std::chrono::system_clock::now() - start_time; 
+    return JudgeResult(id, std::move(line_status_vec), elapsed_time);
 }
 
-OfflineJudge::JudgeResult::LineStatus OfflineJudge::compareLine(const std::string& user_line, const std::string& example_line) const {
+JudgeResult::LineStatus OfflineJudge::CompareLine(const std::string& user_line, const std::string& example_line) const {
     std::istringstream user_stream(user_line), example_stream(example_line);
     std::vector<std::string> user_tokens, example_tokens;
     std::string buf;
@@ -54,12 +88,12 @@ OfflineJudge::JudgeResult::LineStatus OfflineJudge::compareLine(const std::strin
         example_tokens.push_back(buf);
     }
     if (user_tokens.size() != example_tokens.size()) {
-        return OfflineJudge::JudgeResult::LineStatus::ILL_FORMED;
+        return JudgeResult::LineStatus::JRL_ILL_FORMED;
     }
     for (size_t i = 0; i < user_tokens.size(); ++i) {
         if (user_tokens[i] != example_tokens[i]) {
-            return OfflineJudge::JudgeResult::LineStatus::WRONG;
+            return JudgeResult::LineStatus::JRL_WRONG;
         }
     } 
-    return OfflineJudge::JudgeResult::LineStatus::CORRECT;
+    return JudgeResult::LineStatus::JRL_CORRECT;
 }

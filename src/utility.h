@@ -1,12 +1,18 @@
 #pragma once
 
+#define ANSI_RESET "\033[0m"
+#define ANSI_RED "\033[31m";
+#define ANSI_GREEN "\033[32m"
+#define ANSI_YELLOW "\033[33m"
 
 #ifndef NDEBUG
 
 #include <iostream>
 
 #define DEBUG_MSG(msg) do { \
+    std::cerr << ANSI_RED; \
     std::cerr << "[DEBUG MESSAGE]: " << __FILE__ << ":" << __LINE__ << " - " << msg << std::endl; \
+    std::cerr << ANSI_RESET; \
 } while (0)
 
 #else
@@ -14,25 +20,3 @@
 #define DEBUG_MSG(msg)
 
 #endif
-
-#include <filesystem>
-
-void replaceExtension(const std::string& directory, const std::string& source_extension, const std::string& target_extension) {
-    if (!std::filesystem::is_directory(directory)) {
-        throw std::runtime_error(directory + " is not a directory");
-    }
-
-    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-        if (!std::filesystem::is_regular_file(entry)) {
-            continue;
-        }
-
-        auto source_path = entry.path();
-        if (source_path.extension() == source_extension) {
-            auto target_path = entry.path();
-            target_path.replace_extension(target_extension);
-            std::filesystem::rename(source_path, target_path);
-            DEBUG_MSG("Replace " + source_path.string() + " to " + target_path.string());
-        }
-    }
-}

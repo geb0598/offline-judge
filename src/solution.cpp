@@ -2,6 +2,7 @@
 
 #include "utility.h"
 
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -11,12 +12,13 @@
 
 #include <sys/stat.h>
 
-Solution::Solution(std::filesystem::path source_path, std::filesystem::path binary_path):
+Solution::Solution(std::filesystem::path source_path, std::filesystem::path binary_path, std::filesystem::path output_path):
     source_path_(source_path),
-    binary_path_(binary_path) {}
+    binary_path_(binary_path),
+    output_path_(output_path) {}
 
 bool Solution::IsUpdated() const {
-    if (std::filesystem::exists(source_path_)) {
+    if (!std::filesystem::exists(source_path_)) {
         throw std::runtime_error("Failed to open file: " + source_path_.string());
     }
 
@@ -46,6 +48,10 @@ const std::filesystem::path& Solution::get_source_path() const {
 
 const std::filesystem::path& Solution::get_binary_path() const {
     return binary_path_;
+}
+
+const std::filesystem::path& Solution::get_output_path() const {
+    return output_path_;
 }
 
 void Solution::Print() const {

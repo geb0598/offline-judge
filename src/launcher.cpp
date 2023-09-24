@@ -2,6 +2,7 @@
 #include "utility.h"
 
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -13,17 +14,28 @@
 #include <sys/types.h>
 
 LaunchResult::LaunchResult(const std::filesystem::path& path) :
-    path_(path),
+    result_path_(path),
     status_(),
     elapsed_time_() {}
 
 LaunchResult::LaunchResult(const std::filesystem::path& path, int status, std::chrono::system_clock::duration elapsed_time) :
-    path_(path),
+    result_path_(path),
     status_(ParseStatus(status)),
     elapsed_time_(elapsed_time) {}
 
-std::filesystem::path LaunchResult::get_path() const {
-    return path_;
+std::filesystem::path LaunchResult::get_result_path() const {
+    return result_path_;
+}
+
+std::string LaunchResult::get_result() const {
+    std::ifstream file(result_path_);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file : " + result_path_.string());
+    }
+
+    std::ostringstream sstream;
+    sstream << file.rdbuf();
+    return sstream.str();    
 }
 
 LaunchResult::Status LaunchResult::get_status() const {
@@ -57,16 +69,16 @@ void LaunchResult::Print() const {
 
 }
 
-const Launcher& Launcher::getLauncher() {
+const Launcher& Launcher::GetLauncher() {
     static Launcher launcher;
     return launcher;
 }
 
 LaunchResult Launcher::Launch(
-        const std::filesystem::path binary_path, 
+        const std::filesystem::path& binary_path, 
         const std::filesystem::path& input_path, 
         const std::filesystem::path& output_path, 
-        std::chrono::system_clock::duration timeout) const {
+        std::chrono::seconds timeout) const {
     pid_t pid = fork();
     if (pid == -1) {
         throw std::runtime_error("Failed to fork a process");

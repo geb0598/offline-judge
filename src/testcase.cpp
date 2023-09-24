@@ -6,44 +6,68 @@
 #include <iostream>
 #include <stdexcept>
 
-TestCaseContainer::TestCase::TestCase(const std::string& input, const std::string& output) : input_(input), output_(output) {}
+TestCase::TestCase(size_t id, std::filesystem::path input_path, std::filesystem::path output_path) :
+    id_(id),
+    input_path_(input_path),
+    output_path_(output_path) {}
 
-TestCaseContainer::TestCase::TestCase(std::string&& input, std::string&& output) : input_(std::move(input)), output_(std::move(output)) {}
-
-const size_t TestCaseContainer::TestCase::getId() const {
-    return id;
+const size_t TestCase::get_id() const {
+    return id_;
 }
 
-const std::string& TestCaseContainer::TestCase::getInput() const {
-    return input_;
+std::string TestCase::get_input() const {
+    std::ifstream input_file(input_path_);
+    if (!input_file.is_open()) {
+        throw std::runtime_error("Failed to open a file: " + input_path_.string());
+    }
+
+    std::ostringstream input_stream;
+    input_stream << input_file.rdbuf();
+    return input_stream.str();
 }
 
-const std::string& TestCaseContainer::TestCase::getOutput() const {
-    return output_;
+std::string TestCase::get_output() const {
+    std::ifstream output_file(output_path_);
+    if (!output_file.is_open()) {
+        throw std::runtime_error("Failed to open a file: " + output_path_.string()); 
+    }
+
+    std::ostringstream output_stream;
+    output_stream << output_file.rdbuf();
+    return output_stream.str();
 }
 
-void TestCaseContainer::TestCase::printInfo() const {
+const std::filesystem::path& TestCase::get_input_path() const {
+    return input_path_;
+}
+
+const std::filesystem::path& TestCase::get_output_path() const {
+    return output_path_;
+}
+
+void TestCase::Print() const {
 
 }
 
 TestCaseContainer::TestCaseContainer() {};
+TestCaseContainer::TestCaseContainer(
+        const std::filesystem::path& directory_path,
+        const std::filesystem::path& input_extension, 
+        const std::filesystem::path& output_extension) {
+            Initialize(directory_path, input_extension, output_extension);
+        }
 
-TestCaseContainer::TestCaseContainer(const std::string& directory, const std::string& input_extension, const std::string& output_extension) {
-    initialize(directory, input_extension, output_extension);
-}
-
-void TestCaseContainer::addTestCaseFile(const std::string& input_filename, const std::string& output_filename) {
-    test_case_filenames_.emplace_back(input_filename, output_filename);
-}
-
-void TestCaseContainer::initialize(const std::string& directory, const std::string& input_extension, const std::string& output_extension) {
-    if (!std::filesystem::is_directory(directory)) {
-        throw std::runtime_error(directory + " is not a directory");
+void TestCaseContainer::Initialize(
+        const std::filesystem::path& directory_path, 
+        const std::filesystem::path& input_extension, 
+        const std::filesystem::path& output_extension) {
+    if (!std::filesystem::is_directory(directory_path)) {
+        throw std::runtime_error(directory_path.string() + " is not a directory");
     }
 
-    test_case_filenames_.clear();
+    test_case_vec_.clear();
 
-    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+    for (const auto& entry : std::filesystem::directory_iterator(directory_path)) {
         if (!std::filesystem::is_regular_file(entry)) {
             continue;
         }
@@ -59,51 +83,58 @@ void TestCaseContainer::initialize(const std::string& directory, const std::stri
             throw std::runtime_error(output_path.string() + " does not exist or not a regular file");
         }
 
-        addTestCaseFile(input_path.string(), output_path.string());
+        AddTestCaseFile(input_path, output_path);
+        }
+}
+void TestCaseContainer::AddTestCaseFile(const std::filesystem::path& input_path, const std::filesystem::path& output_path) {
+    test_case_vec_.emplace_back(input_path, output_path);
+}
 
-       }
+void TestCaseContainer::ReplaceExtension(
+        const std::filesystem::path& directory_path, 
+        const std::filesystem::path& source_extension, 
+        const std::string& target_extension) const {
+    if (!std::filesystem::is_directory(directory_path)) {
+        throw std::runtime_error(directory_path.string() + " is not a directory");
+    }
+
+    for (const auto& entry : std::filesystem::directory_iterator(directory_path)) {
+        if (!std::filesystem::is_regular_file(entry)) {
+            continue;
+        }
+
+        auto source_path = entry.path();
+        if (source_path.extension() == source_extension) {
+            auto target_path = entry.path();
+            target_path.replace_extension(target_extension);
+            std::filesystem::rename(source_path, target_path);
+            DEBUG_MSG("Replace " + source_path.string() + " to " + target_path.string());
+        }
+    }
 }
 
 size_t TestCaseContainer::size() const {
-    return test_case_filenames_.size();
+    return test_case_vec_.size();
 }
 
 bool TestCaseContainer::empty() const {
-    return test_case_filenames_.empty();
+    return test_case_vec_.empty();
 }
 
-TestCaseContainer::TestCase TestCaseContainer::operator[](size_t index) const {
-    if (index >= test_case_filenames_.size()) {
+TestCase TestCaseContainer::operator[](size_t index) const {
+    if (index >= test_case_vec_.size()) {
         throw std::out_of_range("Out of range");
     }
 
-    auto [input_filename, output_filename] = test_case_filenames_[index];
-    std::ifstream input_file(input_filename);
-    if (!input_file.is_open()) {
-        throw std::runtime_error("Failed to open a file: " + input_filename);
-    }
+    auto [input_path, output_path] = test_case_vec_[index];
 
-    std::ifstream output_file(output_filename);
-    if (!output_file.is_open()) {
-        throw std::runtime_error("Failed to open a file: " + output_filename); 
-    }
-
-    std::ostringstream input_stream;
-    input_stream << input_file.rdbuf();
-    std::string input_string = input_stream.str();
-
-    std::ostringstream output_stream;
-    output_stream << output_file.rdbuf();
-    std::string output_string = output_stream.str();
-    
-    return TestCase(std::move(input_string), std::move(output_string));
+    return TestCase(index, input_path, output_path);
 }
 
-TestCaseContainer::TestCase TestCaseContainer::at(size_t index) const {
-    return (*this)[index];
+TestCase TestCaseContainer::at(size_t index) const {
+    return (*this).at(index);
 }
 
-
-void TestCaseContainer::printInfo() const {
+void TestCaseContainer::Print() const {
 
 }
