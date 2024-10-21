@@ -9,51 +9,151 @@
 #include <sys/resource.h>
 
 #include "process.h"
+#include "exit_status.h"
 
 namespace oj {
+
+static std::unique_ptr<Process> CreateProcess (
+    const std::filesystem::path&    program, 
+    const std::vector<std::string>& args,
+    const FileDescriptor&           pipe_in,
+    const FileDescriptor&           pipe_out,
+    const FileDescriptor&           std_in,
+    const FileDescriptor&           std_out,
+    const FileDescriptor&           std_err) {
+    std::unique_ptr<Process> process;
+    if (pipe_in.is_opened() || pipe_out.is_opened()) {
+        process->OpenPipe();
+    }
+
+    process->Fork();
+    if (process->is_child()) {
+        if (pipe_in.is_opened()) {
+            process->pipe_in().Redirect(pipe_in);
+        }
+
+        if (pipe_out.is_opened()) {
+            process->pipe_out().Redirect(pipe_out);
+        }
+
+        if (std_in.is_opened()) {
+            FD_STD_IN.Redirect(std_in);
+        }
+
+        if (std_out.is_opened()) {
+            FD_STD_OUT.Redirect(std_out);
+        }
+
+        if (std_err.is_opened()) {
+            FD_STD_ERR.Redirect(std_err);
+        }
+    }
+    process->Execute(program, args);
+};
+
+bool Process::HasInstance() {
+    return has_instance_;
+}
+
+void Process::MemoryLimitHandler(int sig) {
+    if (errno == ENOMEM) {
+        exit(static_cast<int>(ExitStatus::OUT_OF_MEMORY));
+    } else {
+        signal(SIGSEGV, SIG_DFL);
+        raise(SIGSEGV);
+    }
+}
+
+void Process::TimeLimitHandler(int sig) {
+    exit(static_cast<int>(ExitStatus::TIMEOUT));
+}
+
+void Process::ExceptionHandler() {
+    try {
+        std::exception_ptr eptr(std::current_exception());
+        if (eptr) {
+            std::rethrow_exception(eptr);
+        }
+    } catch (const std::bad_alloc& e) {
+        exit(static_cast<int>(ExitStatus::EXCEPTION_BAD_ALLOC));
+    } catch (const std::out_of_range& e) {
+        exit(static_cast<int>(ExitStatus::EXCEPTION_OUT_OF_RANGE));
+    } catch(const std::length_error& e) {
+        exit(static_cast<int>(ExitStatus::EXCEPTION_LENGTH_ERROR));
+    } catch(const std::invalid_argument& e) {
+        exit(static_cast<int>(ExitStatus::EXCEPTION_INVALID_ARGUMENT));
+    } catch (...) {
+        exit(static_cast<int>(ExitStatus::EXCEPTION));
+    }
+}
 
 Process::~Process () {
     ClosePipe();
     has_instance_ = false;
 }
 
-Process::Process (
-    const std::filesystem::path&    program,
-    const std::vector<std::string>& args,
-    bool                            should_open_pipe) 
-    : program_(program), args_(args) {
-    if (has_instance_) {
-        throw std::runtime_error("ERROR::Process: Process can have only one instance.");
-    }
+Process::Process() : pid_(-1) {}
 
-    if (should_open_pipe) {
-        OpenPipe();
-    } else {
-        pipefd_[0] = -1;
-        pipefd_[1] = -1;
+void Process::Fork() {
+    if (is_forked()) {
+        throw std::runtime_error("ERROR::Process: Process is already forked.");
     }
 
     if ((pid_ = fork()) == -1) {
         throw std::system_error(errno, std::generic_category(), "ERROR::Process: Failed to fork a process.");
     }
-
-    has_instance_ = true;
 }
 
-void Process::Execute() {
-    if (!IsChildProcess()) {
+void Process::Execute(const std::filesystem::path& program, const std::vector<std::string>& args) {
+    if (!is_forked()) {
+        throw std::runtime_error("ERROR::Process: Process is not yet forked.");
+    }
+
+    if (!is_child()) {
         return;
     }
 
-    ClosePipe();
-
     std::unique_ptr<char*[]> c_args = GetCArgs();
-    execv(program_.string().c_str(), c_args.get());
+    execv(program.string().c_str(), c_args.get());
     exit(EXIT_FAILURE);
 }
 
+void Process::OpenPipe() {
+    if (is_forked()) {
+        throw std::runtime_error("ERROR::Process: Can't open a pipe after fork.");
+    }
+
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        throw std::system_error(errno, std::generic_category(), "ERROR::Process: Failed to open a pipe.");
+    }
+    pipe_in_ = FileDescriptor(pipefd[0]);
+    pipe_out_ = FileDescriptor(pipefd[1]);
+}
+
+void Process::ClosePipe() {
+    pipe_in_.Close();
+    pipe_out_.Close();
+}
+
+void Process::ReadFromPipe(std::ostream& out, bool is_child) const {
+    if (this->is_child() != is_child) {
+        return;
+    }
+
+    pipe_in_.Read(out);
+}
+
+void Process::WriteToPipe(std::istream& in, bool is_child) const {
+    if (this->is_child() != is_child) {
+        return;
+    }
+
+    pipe_out_.Write(in);
+}
+
 void Process::SetSignalHandler(int sig, void (*handler)(int)) const {
-    if (!IsChildProcess()) {
+    if (!is_child()) {
         return;
     }
 
@@ -62,8 +162,16 @@ void Process::SetSignalHandler(int sig, void (*handler)(int)) const {
     }
 }
 
+void Process::SetTerminateHandler(std::terminate_handler handler) const {
+    if (!is_child()) {
+        return;
+    }
+
+    std::set_terminate(handler);
+}
+
 void Process::SetMemoryLimit(int memory_limit_mb, void (*handler)(int)) const {
-    if (!IsChildProcess() || memory_limit_mb == 0) {
+    if (!is_child() || memory_limit_mb == 0) {
         return;
     }
 
@@ -80,7 +188,7 @@ void Process::SetMemoryLimit(int memory_limit_mb, void (*handler)(int)) const {
 }
 
 void Process::SetTimeLimit(int time_limit_sec, int time_limit_usec, void (*handler)(int)) const {
-    if (!IsChildProcess() || (time_limit_sec == 0 && time_limit_usec == 0)) {
+    if (!is_child() || (time_limit_sec == 0 && time_limit_usec == 0)) {
         return;
     }
 
@@ -101,115 +209,27 @@ void Process::SetTimeLimit(int time_limit_sec, int time_limit_usec, void (*handl
     }
 }
 
-void Process::RedirectReadPipe(int fd, bool should_close_read_pipe, bool is_child) {
-    if (IsChildProcess() != is_child) {
-        return;
-    }
-
-    if (pipefd_[0] == -1) {
-        throw std::runtime_error("ERROR::Process: Read pipe is not opened.");
-    }
-
-    RedirectFileDescriptor(pipefd_[0], fd, should_close_read_pipe);
-}
-
-void Process::RedirectWritePipe(int fd, bool should_close_write_pipe, bool is_child) {
-    if (IsChildProcess() != is_child) {
-        return;
-    }
-
-    if (pipefd_[1] == -1) {
-        throw std::runtime_error("ERROR::Process: Write pipe is not opened.");
-    }
-
-    RedirectFileDescriptor(pipefd_[1], fd, should_close_write_pipe);
-}
-
-void Process::ReadFromPipe(std::ostream& os, bool is_child) const {
-    if (IsChildProcess() != is_child) {
-        return;
-    }
-
-    if (pipefd_[0] == -1) {
-        throw std::runtime_error("ERROR::Process: Read pipe is not opened.");
-    }
-
-    char buf[256];
-    ssize_t bytes;
-    while ((bytes = read(pipefd_[0], buf, sizeof(buf))) > 0) {
-        os.write(buf, bytes);
-    }
-
-    if (bytes < 0) {
-        throw std::system_error(errno, std::generic_category(), "ERROR::Process: Failed to read from a pipe.");
-    }
-}
-
-void Process::WriteToPipe(std::istream& is, bool is_child) const {
-    if (IsChildProcess() != is_child) {
-        return;
-    }
-
-    if (pipefd_[1] == -1) {
-        throw std::runtime_error("ERROR::Process: Write pipe is not opened.");
-    }
-
-    char buf[256];
-    while (is.read(buf, sizeof(buf)) || is.gcount() > 0) {
-        ssize_t total_bytes = 0; 
-        ssize_t bytes_to_write = is.gcount();
-        while (total_bytes < bytes_to_write) {
-            ssize_t bytes = write(pipefd_[1], buf + total_bytes, bytes_to_write - total_bytes);
-            if (bytes < 0) {
-                throw std::system_error(errno, std::generic_category(), "ERROR::Process: Failed to write to a pipe.");
-            }
-            total_bytes += bytes;
-        }
-    }
-}
-
-bool Process::IsChildProcess() const {
+bool Process::is_child() const {
     return pid_ == 0;
 }
 
-bool Process::IsParentProcess() const {
-    return !IsChildProcess();
+bool Process::is_parent() const {
+    return !is_child();
+}
+
+bool Process::is_forked() const {
+    return pid_ != -1;
+}
+
+const FileDescriptor& Process::pipe_in() const {
+    return pipe_in_;
+}
+
+const FileDescriptor& Process::pipe_out() const {
+    return pipe_out_;
 }
 
 bool Process::has_instance_ = false;
-
-void Process::OpenPipe() {
-    if (pipe(pipefd_) == -1) {
-        throw std::system_error(errno, std::generic_category(), "ERROR::Process: Failed to open a pipe.");
-    }
-}
-
-void Process::ClosePipe() {
-    CloseFileDescriptor(pipefd_[0]);
-    CloseFileDescriptor(pipefd_[1]);
-}
-
-void Process::CloseFileDescriptor(int fd) {
-    if (fd == -1) {
-        return;
-    }
-
-    if (close(fd) == -1) {
-        throw std::system_error(errno, std::generic_category(), "ERROR::Process: Failed to close a file descriptor.");
-    }
-
-    fd = -1;
-}
-
-void Process::RedirectFileDescriptor(int source, int target, bool should_close_source) {
-    if (dup2(source, target) == -1) {
-        throw std::system_error(errno, std::generic_category(), "ERROR::Process: Failed to duplicate a file descriptor.");
-    }
-
-    if (should_close_source) {
-        CloseFileDescriptor(source);
-    }
-}
 
 std::unique_ptr<char*[]> Process::GetCArgs() const {
     std::unique_ptr<char*[]> args(new char*[args_.size() + 1]);
