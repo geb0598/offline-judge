@@ -12,14 +12,13 @@ namespace oj {
 
 class Process {
 public:
+    static std::unique_ptr<Process> CreateProcess ();
     static std::unique_ptr<Process> CreateProcess (
         const std::filesystem::path&    program, 
         const std::vector<std::string>& args,
-        const FileDescriptor&           pipe_in,
-        const FileDescriptor&           pipe_out,
-        const FileDescriptor&           std_in,
-        const FileDescriptor&           std_out,
-        const FileDescriptor&           std_err);
+        const FileDescriptor&           std_in = FD_EMPTY,
+        const FileDescriptor&           std_out = FD_EMPTY,
+        const FileDescriptor&           std_err = FD_EMPTY);
 
     static bool HasInstance();
 
@@ -37,23 +36,32 @@ public:
     Process& operator=(const Process& other) = delete;
     Process& operator=(Process&& other) noexcept = delete;
 
-    void Fork();
-    void Execute(const std::filesystem::path& program, const std::vector<std::string>& args);
-    void OpenPipe();
-    void ClosePipe();
-    void ReadFromPipe(std::ostream& out, bool is_child) const;
-    void WriteToPipe(std::istream& in, bool is_child) const;
-    void SetSignalHandler(int sig, void (*handler)(int)) const;
-    void SetTerminateHandler(std::terminate_handler handler = ExceptionHandler) const;
-    void SetMemoryLimit(int memory_limit_mb, void (*handler)(int) = MemoryLimitHandler) const;
-    void SetTimeLimit(int time_limit_sec, int time_limit_usec, void (*handler)(int) = TimeLimitHandler) const;
+    void                  Fork();
+    void                  Execute(const std::filesystem::path& program, const std::vector<std::string>& args);
+    void                  Wait();
+    void                  OpenPipe();
+    void                  ClosePipe();
+    void                  ReadFromPipe(std::ostream& out, bool is_child) const;
+    void                  WriteToPipe(std::istream& in, bool is_child) const;
+    void                  SetSignalHandler(int sig, void (*handler)(int)) const;
+    void                  SetTerminateHandler(std::terminate_handler handler = ExceptionHandler) const;
+    void                  SetMemoryLimit(int memory_limit_mb, void (*handler)(int) = MemoryLimitHandler) const;
+    void                  SetTimeLimit(int time_limit_sec, int time_limit_usec, void (*handler)(int) = TimeLimitHandler) const;
 
-    bool is_child() const;
-    bool is_parent() const;
-    bool is_forked() const;
+    bool                  is_child() const;
+    bool                  is_parent() const;
+    bool                  is_forked() const;
+    bool                  is_exited() const;
+    bool                  is_signaled() const;
 
     const FileDescriptor& pipe_in() const;
     const FileDescriptor& pipe_out() const;
+
+    int                   status() const;
+    int                   execution_time_sec() const;
+    int                   execution_time_usec() const;
+    int                   memory_usage_kb() const;
+    int                   memory_usage_mb() const;
 
 private:
     static constexpr int      KB = 1024;
@@ -61,11 +69,13 @@ private:
 
     static bool               has_instance_;
 
-    std::unique_ptr<char* []> GetCArgs() const;
+    std::unique_ptr<char* []> GetCArgs(const std::vector<std::string>& args) const;
 
     pid_t                     pid_;
     FileDescriptor            pipe_in_;
     FileDescriptor            pipe_out_;
+    int                       status_;
+    rusage                    usage_;
 };
 
 }

@@ -13,29 +13,19 @@
 
 namespace oj {
 
+static std::unique_ptr<Process> CreateProcess () {
+    return std::make_unique<Process>();
+}
+
 static std::unique_ptr<Process> CreateProcess (
     const std::filesystem::path&    program, 
     const std::vector<std::string>& args,
-    const FileDescriptor&           pipe_in,
-    const FileDescriptor&           pipe_out,
     const FileDescriptor&           std_in,
     const FileDescriptor&           std_out,
     const FileDescriptor&           std_err) {
-    std::unique_ptr<Process> process;
-    if (pipe_in.is_opened() || pipe_out.is_opened()) {
-        process->OpenPipe();
-    }
-
+    std::unique_ptr<Process> process = std::make_unique<Process>();
     process->Fork();
     if (process->is_child()) {
-        if (pipe_in.is_opened()) {
-            process->pipe_in().Redirect(pipe_in);
-        }
-
-        if (pipe_out.is_opened()) {
-            process->pipe_out().Redirect(pipe_out);
-        }
-
         if (std_in.is_opened()) {
             FD_STD_IN.Redirect(std_in);
         }
@@ -92,7 +82,9 @@ Process::~Process () {
     has_instance_ = false;
 }
 
-Process::Process() : pid_(-1) {}
+Process::Process() : pid_(-1), status_(-1) {
+    has_instance_ = true;
+}
 
 void Process::Fork() {
     if (is_forked()) {
@@ -113,9 +105,23 @@ void Process::Execute(const std::filesystem::path& program, const std::vector<st
         return;
     }
 
-    std::unique_ptr<char*[]> c_args = GetCArgs();
+    std::unique_ptr<char*[]> c_args = GetCArgs(args);
     execv(program.string().c_str(), c_args.get());
     exit(EXIT_FAILURE);
+}
+
+void Process::Wait() {
+    if (!is_parent()) {
+        return;
+    }
+
+    if (!is_forked()) {
+        throw std::runtime_error("ERROR::Process: Can't wait a process not forked.");
+    }
+
+    if (wait4(pid_, &status_, NULL, &usage_) == -1) {
+        throw std::system_error(errno, std::generic_category(), "ERROR::Process: Failed to wait a child process with error.");
+    }
 }
 
 void Process::OpenPipe() {
@@ -221,6 +227,14 @@ bool Process::is_forked() const {
     return pid_ != -1;
 }
 
+bool Process::is_exited() const {
+    return WIFEXITED(status_);
+}
+
+bool Process::is_signaled() const {
+    return WIFSIGNALED(status_);
+}
+
 const FileDescriptor& Process::pipe_in() const {
     return pipe_in_;
 }
@@ -229,15 +243,51 @@ const FileDescriptor& Process::pipe_out() const {
     return pipe_out_;
 }
 
+int Process::status() const {
+    return status_;
+}
+
+int Process::execution_time_sec() const {
+    if (!is_exited() && !is_signaled()) {
+        throw std::runtime_error("ERROR::Process: Process is still executing.");
+    }
+
+    return usage_.ru_utime.tv_sec + usage_.ru_stime.tv_sec;
+}
+
+int Process::execution_time_usec() const {
+    if (!is_exited() && !is_signaled()) {
+        throw std::runtime_error("ERROR::Process: Process is still executing.");
+    }    
+    
+    return usage_.ru_utime.tv_usec + usage_.ru_stime.tv_usec;
+}
+
+int Process::memory_usage_kb() const {
+    if (!is_exited() && !is_signaled()) {
+        throw std::runtime_error("ERROR::Process: Process is still executing.");
+    }
+
+    return usage_.ru_maxrss;
+}
+
+int Process::memory_usage_mb() const {
+    if (!is_exited() && !is_signaled()) {
+        throw std::runtime_error("ERROR::Process: Process is still executing.");
+    }
+
+    return usage_.ru_maxrss / KB; 
+}
+
 bool Process::has_instance_ = false;
 
-std::unique_ptr<char*[]> Process::GetCArgs() const {
-    std::unique_ptr<char*[]> args(new char*[args_.size() + 1]);
-    for (size_t i = 0; i < args_.size(); ++i) {
-        args[i] = const_cast<char*>(args_[i].c_str());
+std::unique_ptr<char*[]> Process::GetCArgs(const std::vector<std::string>& args) const {
+    std::unique_ptr<char*[]> c_args(new char*[args.size() + 1]);
+    for (size_t i = 0; i < args.size(); ++i) {
+        c_args[i] = const_cast<char*>(args[i].c_str());
     }
-    args[args_.size()] = nullptr;
-    return args;
+    c_args[args.size()] = nullptr;
+    return c_args;
 }
 
 }
