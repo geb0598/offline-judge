@@ -7,6 +7,8 @@
 
 #include <sys/resource.h>
 
+#include "file_descriptor.h"
+
 namespace oj {
 
 class Subprocess {
@@ -31,6 +33,15 @@ public:
     int    Poll();
     int    Wait();
 
+    void   ReadFromPipe(std::ostream& out);
+    void   WriteToPipe(std::istream& in);
+
+    bool   is_parent() const;
+    bool   is_forked() const;
+    bool   is_terminated() const;
+    bool   is_input_pipe_opened() const;
+    bool   is_output_pipe_opened() const;
+
     int    pid() const;
     int    status() const;
     rusage usage() const;
@@ -42,20 +53,17 @@ private:
 
     void OpenPipe();
     void ClosePipe();
-    void ReadFromPipe(std::ostream* out);
-    void WriteToPipe(std::istream* in);
 
     void SetTerminateHandler(std::terminate_handler handler = ExceptionHandler);
     void SetMemoryLimit(int memory_limit_mb, void (*handler)(int) = MemoryLimitHandler);
     void SetTimeLimit(int time_limit_sec, int time_limit_usec, void (*handler)(int) = TimeLimitHandler);
 
-    bool is_parent();
-    bool is_forked();
-
-    pid_t  pid_;
-    int    pipefd_[2];
-    int    status_;
-    rusage usage_;
+    pid_t                           pid_;
+    std::unique_ptr<FileDescriptor> pipe_in_;
+    std::unique_ptr<FileDescriptor> pipe_out_;
+    bool                            is_terminated_;
+    int                             status_;
+    rusage                          usage_;
 };
 
 }
